@@ -30,3 +30,12 @@
 *.exe
 *.out
 *.app
+
+# Inputs/outputs
+geninput/*
+refout/*
+refout_v/*
+genrefout/*
+genrefout_v/*
+myout/*
+myout_v/*
