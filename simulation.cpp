@@ -83,8 +83,6 @@ public:
 
 int getrandom(int burst, int* randvals, int randvals_c) {
     ofs = ofs % randvals_c;
-    // cout << "in getrandom ofs = " << ofs << " randvals_c = " << randvals_c << " num " << randvals[ofs]
-    // << " burst " << burst << '\n';
     return 1 + (randvals[ofs++] % burst);
 }
 
@@ -101,6 +99,7 @@ priority_queue<Event*, deque<Event*>, Compare> parseInput(ifstream& f, int maxpr
     return pq;
 }
 
+//TODO: handle events with same timestamps!!!
 int main(int argc, char **argv) {
     
     //TODO: handle arguments with getopt
@@ -115,7 +114,7 @@ int main(int argc, char **argv) {
     for(int i = 0; i < randvals_c; i++) {
         randin >> randvals[i];
     }
-    // cout << "rand count " << randvals_c << '\n';
+    
     randin.close();
 
     ifstream input;
@@ -150,7 +149,7 @@ int main(int argc, char **argv) {
         delete evt; evt = nullptr;
 
         switch (transition) {
-        case CREATED_TO_READY: // process created, ready to run at the same time
+        case CREATED_TO_READY:
         case BLOCKED_TO_READY:
         case RUN_TO_READY:
         {
@@ -159,7 +158,6 @@ int main(int argc, char **argv) {
             
             printf("%d %d %d: %s\n", current_time, proc->getPID(), time_in_prev_state, transition_names[transition]);
             proc->setState(READY);
-            // cout << "pushing proc " << *proc << '\n';
             scheduler->add_process(proc);
             call_scheduler = true;
             break;
@@ -170,8 +168,9 @@ int main(int argc, char **argv) {
             proc->setState(RUNNING);
             current_running_process = proc;
             int current_cb = min(getrandom(proc->getCB(), randvals, randvals_c), proc->getRemTime());
-            printf("%d %d %d: %s cb=%d rem=%d prio=%d\n", current_time, proc->getPID(), time_in_prev_state, transition_names[transition], current_cb, proc->getRemTime(), proc->getPrio());
-            // cout << "cb = " << current_cb << " running proc " << *current_running_process << '\n';
+            printf("%d %d %d: %s cb=%d rem=%d prio=%d\n", current_time, proc->getPID(),
+                    time_in_prev_state, transition_names[transition], 
+                    current_cb, proc->getRemTime(), proc->getPrio());
             int run_proc_time;
             if(current_cb <= quantum) {
                 run_proc_time = min(current_cb, proc->getRemTime());
@@ -210,8 +209,8 @@ int main(int argc, char **argv) {
             }
             
             int io_time = getrandom(proc->getIO(), randvals, randvals_c);
-            printf("%d %d %d: %s  ib=%d rem=%d\n", current_time, proc->getPID(), time_in_prev_state, transition_names[transition], io_time, proc->getRemTime());
-            // cout << "io_time = " << io_time << " blocking proc " << *proc << '\n';
+            printf("%d %d %d: %s  ib=%d rem=%d\n", current_time, proc->getPID(),
+                    time_in_prev_state, transition_names[transition], io_time, proc->getRemTime());
             proc->setIOT(proc->getIOT() + io_time);
             sim->putEvent(new Event(current_time + io_time, current_running_process, BLOCKED, READY, BLOCKED_TO_READY));
             current_running_process = nullptr;
@@ -234,6 +233,7 @@ int main(int argc, char **argv) {
                 current_running_process = scheduler->get_next_process();
                 if(current_running_process == nullptr)
                     continue; //no processes to schedule, wait till next event
+                
                 // increment cpu waiting time
                 int time_in_ready_queue = current_time - current_running_process->getStateTS();
                 current_running_process->setCWT(current_running_process->getCWT() + time_in_ready_queue);
