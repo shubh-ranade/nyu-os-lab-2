@@ -13,7 +13,7 @@ class Process {
 private:
     int pid, at, tc, cb, io;
     // state_ts: ts when the process was put in current state "state"
-    int state_ts, rem_time;
+    int state_ts, rem_time, rem_cb;
     int ft, tt, iot, cwt;
     int static_prio, dynamic_prio;
     process_state_t state;
@@ -30,6 +30,7 @@ public:
         , dynamic_prio(st_prio - 1)
         , state_ts(at)
         , rem_time(tc)
+        , rem_cb(0)
         , iot(0)
         , cwt(0)
     {}
@@ -41,6 +42,7 @@ public:
     int getIO() { return io; }
     int getStateTS() { return state_ts; }
     int getRemTime() { return rem_time; }
+    int getRemCB() { return rem_cb; }
     int getFT() { return ft; }
     int getTT() { return tt; }
     int getIOT() { return iot; }
@@ -50,6 +52,7 @@ public:
     void setState(process_state_t s) { state = s; }
     void setStateTS(int ts) { state_ts = ts; }
     void setRemTime(int rt) { rem_time = rt; }
+    void setRemCB(int t) { rem_cb = t; }
     void setFT(int t) { ft = t; }
     void setTT(int t) { tt = t; }
     void setIOT(int t) { iot = t; }

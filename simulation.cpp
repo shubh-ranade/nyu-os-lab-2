@@ -9,6 +9,7 @@
 using namespace std;
 
 int ofs = 0;
+int genTimestamp = 0;
 
 const char* transition_names[] = {
     "CREATED -> READY",
@@ -18,9 +19,12 @@ const char* transition_names[] = {
     "RUNNG -> READY"
 };
 
-class Compare {
+class EvtCompare {
 public:
     bool operator() (Event* lhs, Event* rhs) {
+        if(lhs->getEvtTimestamp() == rhs->getEvtTimestamp()) {
+            return lhs->getGenTimestamp() > rhs->getGenTimestamp();
+        }
         return lhs->getEvtTimestamp() > rhs->getEvtTimestamp();
     }
 };
@@ -32,19 +36,24 @@ ostream& operator<<(ostream& os, Process& proc) {
 }
 
 ostream& operator<<(ostream& os, Event& evt) {
-    return os << "Timestamp: " << evt.getEvtTimestamp() << " Old state: " << evt.getOldState()
+    return os << "Timestamp: " << evt.getEvtTimestamp() << " Gen Timestamp: " << evt.getGenTimestamp() << " Old state: " << evt.getOldState()
         << " New state: " << evt.getNewState() << " Process Info: " << *evt.getEvtProc()
         << " Time in prev state: " << evt.getEvtTimestamp() - evt.getEvtProc()->getStateTS();
 }
 
+typedef priority_queue<Event*, vector<Event*>, EvtCompare> des_queue;
+
 class Simulation {
 private:
-    std::priority_queue<Event*, std::deque<Event*>, Compare> eventQ;
+    des_queue eventQ;
     int total_sim_time;
+	int acc_io_time, num_proc_in_io, io_start, io_end;
     double cpu_eff, io_eff, avg_tt, avg_wt, throughput;
 
 public:
-    Simulation(std::priority_queue<Event*, std::deque<Event*>, Compare>& q): eventQ(q) {}
+    Simulation(des_queue& q): eventQ(q), acc_io_time(0), num_proc_in_io(0), io_start(0), io_end(0) {}
+	int getIOTime() { return acc_io_time; }
+	void setIOTime(int t) { acc_io_time = t; }
     // bool hasMoreEvents() { return !eventQ.empty(); }
     Event* getEvent() {
         Event* ret = nullptr;
@@ -57,6 +66,24 @@ public:
     void putEvent(Event* evt) { eventQ.push(evt); }
     void rmEvent() { return; }
     int getNextEventTime() { return eventQ.empty() ? -1 : eventQ.top()->getEvtTimestamp(); }
+
+	void io_interval_start(int current_ts) {
+		num_proc_in_io++;
+		if(num_proc_in_io == 1) {
+			io_start = current_ts;
+			// printf("Starting io at %d\n", io_start);
+		}
+	}
+
+	void io_interval_end(int current_ts) {
+		num_proc_in_io--;
+		if(num_proc_in_io == 0) {
+			io_end = current_ts;
+			acc_io_time += + io_end - io_start;
+			// printf("Ending io at %d, acc_io_time %d\n", io_end, acc_io_time);
+		}
+	}
+    
     void calculate_metrics(vector<Process*> processes) {
         int max_ft = -1; // equal to total_sim_time
         int acc_cpu_time = 0;
@@ -73,6 +100,7 @@ public:
         }
         total_sim_time = max_ft;
         cpu_eff = ((double)acc_cpu_time*100) / max_ft;
+		io_eff = ((double)acc_io_time*100) / max_ft;
         throughput = (n * 100.0) / max_ft;
         avg_tt = (double)acc_tt / n;
         avg_wt = (double)acc_wt / n;
@@ -83,16 +111,17 @@ public:
 
 int getrandom(int burst, int* randvals, int randvals_c) {
     ofs = ofs % randvals_c;
+    // cout << "now reading " << randvals[ofs] << endl;
     return 1 + (randvals[ofs++] % burst);
 }
 
-priority_queue<Event*, deque<Event*>, Compare> parseInput(ifstream& f, int maxprio, int* randvals, int randvals_c) {
+des_queue parseInput(ifstream& f, int maxprio, int* randvals, int randvals_c) {
     int at, tc, cb, io;
-    priority_queue<Event*, deque<Event*>, Compare> pq;
+    des_queue pq;
     while(f >> at >> tc >> cb >> io) {
         // pid is the same as current size of priority queue
         Process* newProc = new Process(pq.size(), at, tc, cb, io, CREATED, getrandom(maxprio, randvals, randvals_c));
-        Event* evt = new Event(at, newProc, CREATED, READY, CREATED_TO_READY);
+        Event* evt = new Event(at, genTimestamp++, newProc, CREATED, READY, CREATED_TO_READY);
         pq.push(evt);
     }
 
@@ -102,41 +131,145 @@ priority_queue<Event*, deque<Event*>, Compare> parseInput(ifstream& f, int maxpr
 //TODO: handle events with same timestamps!!!
 int main(int argc, char **argv) {
     
-    //TODO: handle arguments with getopt
-    if(!argv[1] || !argv[2])
-        return 1;
+    // handle arguments with getopt
+    bool verbose = false, trace = false, eflag = false, pflag = false;
+	char *schedspec = NULL;
+	int index;
+	int c;
+	char sched_type;
+	int q_arg, mprio_arg;
+    int quantum = INT32_MAX, maxprio = 4;
 
-    ifstream randin;
-    randin.open(argv[2]);
+	opterr = 0;
+
+	while ((c = getopt (argc, argv, "vteps:")) != -1)
+	switch (c)
+    {
+    case 'v':
+        verbose = true;
+        break;
+    case 't':
+        trace = true;
+        break;
+    case 'e':
+        eflag = true;
+        break;
+    case 'p':
+        pflag = true;
+        break;
+    case 's':
+    {
+        schedspec = optarg;
+        int num_read = sscanf(schedspec, "%c%d:%d", &sched_type, &q_arg, &mprio_arg);
+        switch (num_read)
+        {
+        case 3: {
+            quantum = q_arg;
+            maxprio = mprio_arg;
+            break;
+		}
+        
+        case 2:
+            quantum = q_arg;
+            break;
+        
+		case 1:
+			break;
+
+		default:
+            printf("No scheduler specified\n");
+			exit(EXIT_FAILURE);
+        }
+		if(sched_type != 'F' && sched_type != 'L' && sched_type != 'S' && sched_type != 'R' && sched_type != 'P' && sched_type != 'E') {
+			printf("Unknown arguemnt %c with -%c option", sched_type, c);
+			exit(EXIT_FAILURE);
+		}
+        break;
+    }
+    case '?':
+        if (optopt == 's')
+            fprintf (stderr, "Option -%c requires an argument.\n", optopt);
+        else if (isprint (optopt))
+            fprintf (stderr, "Unknown option `-%c'.\n", optopt);
+        else
+            fprintf (stderr,
+                    "Unknown option character `\\x%x'.\n",
+                    optopt);
+        return 1;
+    default:
+		exit(EXIT_FAILURE);
+    }
+
+    if(!argv[optind] || !argv[optind+1]) {
+		printf("Not enough non-optional arguments. Got %s and %s.\n", argv[optind], argv[optind+1]);
+		printf("Usage: <program> [-v] [-t] [-e] [-p] [-s [FLS | R<num> | P<num>[:<maxprio>] | E<num>[:<maxprios>]]] inputfile randfile\n");
+	}
+
+    // read randfile
+	ifstream randin;
+    randin.open(argv[optind+1]);
     int randvals_c;
     randin >> randvals_c;
     int randvals[randvals_c];
     for(int i = 0; i < randvals_c; i++) {
         randin >> randvals[i];
-    }
-    
+	}
     randin.close();
 
+	// read inputfile
     ifstream input;
-    input.open(argv[1]);
-    int quantum = INT32_MAX, maxprio = 4;
-
-    priority_queue<Event*, deque<Event*>, Compare> event_queue = parseInput(input, maxprio, randvals, randvals_c);
+    input.open(argv[optind]);
+    des_queue event_queue = parseInput(input, maxprio, randvals, randvals_c);
     input.close();
 
-    // assign priorities to processes
+    // while(!event_queue.empty()) {
+    //     cout << *event_queue.top() << '\n';
+    //     event_queue.pop();
+    // }
 
     // at exit, store processes here (process exits when rem_t = 0)
     vector<Process*> processes(event_queue.size());
 
-    // TODO: make dynamic, initialize properly
-    Scheduler* scheduler = new FIFOSched();
+    // create scheduler
+    Scheduler* scheduler;
+	switch (sched_type)
+	{
+	case 'F':
+		scheduler = new FCFSSched();
+		break;
+
+	case 'R':
+		scheduler = new FCFSSched();
+		break;
+	
+	case 'L':
+		scheduler = new LCFSSched();
+		break;
+
+	case 'S':
+		scheduler = new SRTFSched();
+		break;
+	
+	case 'P':
+		// scheduler = new PRIOSched();
+		break;
+
+	case 'E':
+		break;
+
+	default: {
+		printf("Unknown scheduler\n");
+		exit(EXIT_FAILURE);
+	}
+	}
 
     Simulation* sim = new Simulation(event_queue);
     Event* evt;
     int current_time = 0;
+	int num_proc_in_io = 0, io_start = 0, io_end = 0;
     Process* current_running_process = nullptr;
 
+    // simulation
     while( (evt = sim->getEvent()) ) {
         // cout << *evt << '\n';
         // cout << evt->getTransition() << '\n';
@@ -153,11 +286,28 @@ int main(int argc, char **argv) {
         case BLOCKED_TO_READY:
         case RUN_TO_READY:
         {
-            if(proc->getState() == RUNNING)
+            if(proc->getState() == RUNNING) { // if previous state was running
+            	// calculate new remaining time as well as remaining cb
                 proc->setRemTime(proc->getRemTime() - time_in_prev_state);
+                proc->setRemCB(proc->getRemCB() - time_in_prev_state);
+				current_running_process = nullptr;
+            }
+
+			// measure io util if prev state was blocked
+			if(proc->getState() == BLOCKED) {
+				sim->io_interval_end(current_time);
+			}
             
-            printf("%d %d %d: %s\n", current_time, proc->getPID(), time_in_prev_state, transition_names[transition]);
-            proc->setState(READY);
+            if(verbose) {
+				if(proc->getState() == RUNNING) {
+					printf("%d %d %d: %s  cb=%d rem=%d prio=%d\n", current_time, proc->getPID(),
+						time_in_prev_state, transition_names[transition], 
+						proc->getRemCB(), proc->getRemTime(), proc->getPrio());
+				}
+				else
+					printf("%d %d %d: %s\n", current_time, proc->getPID(), time_in_prev_state, transition_names[transition]);
+			}
+			proc->setState(READY);
             scheduler->add_process(proc);
             call_scheduler = true;
             break;
@@ -167,26 +317,32 @@ int main(int argc, char **argv) {
             // create event for preemption or blocking, no call to scheduler
             proc->setState(RUNNING);
             current_running_process = proc;
-            int current_cb = min(getrandom(proc->getCB(), randvals, randvals_c), proc->getRemTime());
-            printf("%d %d %d: %s cb=%d rem=%d prio=%d\n", current_time, proc->getPID(),
+            int proc_rem_time = proc->getRemTime();
+            
+            // new cb only if current cb has expired
+            int current_cb = proc->getRemCB() == 0
+                            ? min(getrandom(proc->getCB(), randvals, randvals_c), proc_rem_time)
+                            : proc->getRemCB();
+            
+            if(verbose)
+			printf("%d %d %d: %s cb=%d rem=%d prio=%d\n", current_time, proc->getPID(),
                     time_in_prev_state, transition_names[transition], 
-                    current_cb, proc->getRemTime(), proc->getPrio());
+                    current_cb, proc_rem_time, proc->getPrio());
+            
+            proc->setRemCB(current_cb);
+
             int run_proc_time;
-            if(current_cb <= quantum) {
-                run_proc_time = min(current_cb, proc->getRemTime());
-                sim->putEvent(new Event(current_time + run_proc_time, current_running_process,
-                                            RUNNING, BLOCKED, RUN_TO_BLOCKED));
-            } else {
-                if(quantum < proc->getRemTime()) {
-                    run_proc_time = quantum;
-                    sim->putEvent(new Event(current_time + run_proc_time, current_running_process,
-                                                RUNNING, READY, RUN_TO_READY));
-                }
-                else { // process exits before quantum
-                    run_proc_time = proc->getRemTime();
-                    sim->putEvent(new Event(current_time + run_proc_time, current_running_process,
-                                                RUNNING, BLOCKED, RUN_TO_BLOCKED));
-                }
+            run_proc_time = min(current_cb, min(proc_rem_time, quantum));
+            // check for termination; process exits in blocked state
+			if(run_proc_time == proc_rem_time) {
+                sim->putEvent(new Event(current_time + run_proc_time, genTimestamp++, proc,
+                                        RUNNING, BLOCKED, RUN_TO_BLOCKED));
+			} else if(run_proc_time == current_cb) {  // check for io scheduling
+                sim->putEvent(new Event(current_time + run_proc_time, genTimestamp++, proc,
+                                        RUNNING, BLOCKED, RUN_TO_BLOCKED));
+            } else if(run_proc_time == quantum) { // check for quantum expiration
+                sim->putEvent(new Event(current_time + run_proc_time, genTimestamp++, proc,
+                                        RUNNING, READY, RUN_TO_READY));
             }
             break;
         }
@@ -194,25 +350,29 @@ int main(int argc, char **argv) {
         case RUN_TO_BLOCKED: { // all processes exit in blocked state
             proc->setState(BLOCKED);
             proc->setRemTime(proc->getRemTime() - time_in_prev_state);
+            proc->setRemCB(0);
+			sim->io_interval_start(current_time);
             call_scheduler = true;
             
             // if process has run for tc, don't do io, add process to final vector
-            // TODO: calculate stats
             if(proc->getRemTime() == 0) {
                 // cout << "exiting proc " << *proc << '\n';
+				sim->io_interval_end(current_time);
                 proc->setFT(current_time);
                 proc->setTT(current_time - proc->getAT());
                 processes[proc->getPID()] = proc;
-                printf("%d %d %d: Done\n", current_time, proc->getPID(), time_in_prev_state);
+                if(verbose)
+					printf("%d %d %d: Done\n", current_time, proc->getPID(), time_in_prev_state);
                 current_running_process = nullptr;
                 break;
             }
             
             int io_time = getrandom(proc->getIO(), randvals, randvals_c);
-            printf("%d %d %d: %s  ib=%d rem=%d\n", current_time, proc->getPID(),
+            if(verbose)
+			printf("%d %d %d: %s  ib=%d rem=%d\n", current_time, proc->getPID(),
                     time_in_prev_state, transition_names[transition], io_time, proc->getRemTime());
             proc->setIOT(proc->getIOT() + io_time);
-            sim->putEvent(new Event(current_time + io_time, current_running_process, BLOCKED, READY, BLOCKED_TO_READY));
+            sim->putEvent(new Event(current_time + io_time, genTimestamp++, proc, BLOCKED, READY, BLOCKED_TO_READY));
             current_running_process = nullptr;
             break;
         }
@@ -239,12 +399,45 @@ int main(int argc, char **argv) {
                 current_running_process->setCWT(current_running_process->getCWT() + time_in_ready_queue);
 
                 // create event to make the process runnable
-                sim->putEvent(new Event(current_time, current_running_process, READY, RUNNING, READY_TO_RUN));
+                sim->putEvent(new Event(current_time, genTimestamp++, current_running_process, READY, RUNNING, READY_TO_RUN));
             }
         }
     }
 
+	switch (sched_type)
+	{
+	case 'F':
+		printf("FCFS\n");
+		break;
+
+	case 'R':
+		printf("RR %d\n", quantum);
+		break;
+	
+	case 'L':
+		printf("LCFS\n");
+		break;
+
+	case 'S':
+		printf("SRTF\n");
+		break;
+	
+	case 'P':
+		printf("PRIO %d\n", quantum);
+		break;
+
+	case 'E':
+		printf("PREPRIO %d\n", quantum);
+	
+	default: {
+		printf("Unknown scheduler\n");
+		exit(EXIT_FAILURE);
+	}
+	}
+
     sim->calculate_metrics(processes);
+
+    delete sim;
 
     return EXIT_SUCCESS;
 }
