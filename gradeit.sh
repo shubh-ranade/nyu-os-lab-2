@@ -10,8 +10,8 @@ INS="`seq 0 6`"
 OUTPRE="out"
 
 #SCHEDS="  F   L   S  R2  R5  P2  P5  E2  E4"
-SCHEDS="   F    L    S   R2   R5   P2   P5:3 E2:5  E4"  
-#SCHEDS="   F"
+# SCHEDS="   F    L    S   R2   R5   P2   P5:3 E2:5  E4"  
+SCHEDS="   F    L    S   R2   R5"
 
 ############################################################################
 #  NO TRACING 
@@ -25,6 +25,10 @@ for s in ${SCHEDS}; do
 	let counters[$x]=0
 	let x=$x+1
 done
+
+if [[ -f "$LOG" ]]; then
+	rm ${LOG}
+fi
 
 #OUTLINE="SUM"
 #x=0
