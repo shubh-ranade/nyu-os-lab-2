@@ -401,10 +401,10 @@ int main(int argc, char **argv) {
 			// timestamp as current time.
 			if(current_running_process && sched_type == 'E') {
 				prio_preemption = scheduler->test_preempt(current_running_process, proc, current_time, exit_event);
-				if(verbose)
-				printf("---> PRIO preemption %d by %d ? %d TS=%d now=%d) --> %s\n",
-						current_running_process->getPID(), proc->getPID(), proc->getPrio() > current_running_process->getPrio(),
-						exit_event->getEvtTimestamp(), current_time, prio_test_preempt_action[(int)prio_preemption]);
+//				if(verbose)
+//				printf("---> PRIO preemption %d by %d ? %d TS=%d now=%d) --> %s\n",
+//						current_running_process->getPID(), proc->getPID(), proc->getPrio() > current_running_process->getPrio(),
+//						exit_event->getEvtTimestamp(), current_time, prio_test_preempt_action[(int)prio_preemption]);
 				if(prio_preemption) {
 					exit_event->invalidate();
 					exit_event = new Event(current_time, genTimestamp++, current_running_process, RUNNING, READY, RUN_TO_READY);
