@@ -8,23 +8,18 @@ private:
     process_state_t oldState, newState;
     state_transition_t transition;
     Process* evtProc;
+    bool isValid;
 
 public:
-    Event(int ts, int gs, Process* proc, process_state_t os, process_state_t ns, state_transition_t trans)
-        : evtTimestamp(ts)
-        , generatedTimestamp(gs)
-        , evtProc(proc)
-        , oldState(os)
-        , newState(ns)
-        , transition(trans)
-    {}
-
-    int getEvtTimestamp() { return evtTimestamp; }
-    int getGenTimestamp() { return generatedTimestamp; }
-    Process* getEvtProc() { return evtProc; }
-    process_state_t getOldState() { return oldState; }
-    process_state_t getNewState() { return newState; }
-    state_transition_t getTransition() { return transition; }
+    Event(int ts, int gs, Process* proc, process_state_t os, process_state_t ns, state_transition_t trans);
+    int getEvtTimestamp();
+    int getGenTimestamp();
+    bool isEvtValid();
+    void invalidate();
+    Process* getEvtProc();
+    process_state_t getOldState();
+    process_state_t getNewState();
+    state_transition_t getTransition();
 };
 
 #endif
