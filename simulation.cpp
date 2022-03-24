@@ -19,6 +19,11 @@ const char* transition_names[] = {
     "RUNNG -> READY"
 };
 
+const char* prio_test_preempt_action[] = {
+	"NO",
+	"YES"
+};
+
 class EvtCompare {
 public:
     bool operator() (Event* lhs, Event* rhs) {
@@ -63,15 +68,16 @@ public:
         }
         return ret;
     }
+
     void putEvent(Event* evt) { eventQ.push(evt); }
     void rmEvent() { return; }
     int getNextEventTime() { return eventQ.empty() ? -1 : eventQ.top()->getEvtTimestamp(); }
+	bool isNextEventValid() { return eventQ.top()->isEvtValid(); }
 
 	void io_interval_start(int current_ts) {
 		num_proc_in_io++;
 		if(num_proc_in_io == 1) {
 			io_start = current_ts;
-			// printf("Starting io at %d\n", io_start);
 		}
 	}
 
@@ -80,7 +86,6 @@ public:
 		if(num_proc_in_io == 0) {
 			io_end = current_ts;
 			acc_io_time += + io_end - io_start;
-			// printf("Ending io at %d, acc_io_time %d\n", io_end, acc_io_time);
 		}
 	}
     
@@ -111,7 +116,6 @@ public:
 
 int getrandom(int burst, int* randvals, int randvals_c) {
     ofs = ofs % randvals_c;
-    // cout << "now reading " << randvals[ofs] << endl;
     return 1 + (randvals[ofs++] % burst);
 }
 
@@ -222,11 +226,6 @@ int main(int argc, char **argv) {
     des_queue event_queue = parseInput(input, maxprio, randvals, randvals_c);
     input.close();
 
-    // while(!event_queue.empty()) {
-    //     cout << *event_queue.top() << '\n';
-    //     event_queue.pop();
-    // }
-
     // at exit, store processes here (process exits when rem_t = 0)
     vector<Process*> processes(event_queue.size());
 
@@ -251,10 +250,11 @@ int main(int argc, char **argv) {
 		break;
 	
 	case 'P':
-		// scheduler = new PRIOSched();
+		scheduler = new PRIOSched(maxprio, false);
 		break;
 
 	case 'E':
+		scheduler = new PRIOSched(maxprio, true);
 		break;
 
 	default: {
@@ -268,24 +268,28 @@ int main(int argc, char **argv) {
     int current_time = 0;
 	int num_proc_in_io = 0, io_start = 0, io_end = 0;
     Process* current_running_process = nullptr;
+	Event* exit_event = nullptr;
 
     // simulation
     while( (evt = sim->getEvent()) ) {
-        // cout << *evt << '\n';
-        // cout << evt->getTransition() << '\n';
+		if(!evt->isEvtValid()) {
+			delete evt; evt = nullptr;
+			continue;
+		}
+
         Process* proc = evt->getEvtProc();
         current_time = evt->getEvtTimestamp();
         state_transition_t transition = evt->getTransition();
         int time_in_prev_state = current_time - proc->getStateTS();
         proc->setStateTS(current_time);
         bool call_scheduler = false;
+		bool prio_preemption = false;
         delete evt; evt = nullptr;
 
         switch (transition) {
         case CREATED_TO_READY:
         case BLOCKED_TO_READY:
-        case RUN_TO_READY:
-        {
+        case RUN_TO_READY: {
             if(proc->getState() == RUNNING) { // if previous state was running
             	// calculate new remaining time as well as remaining cb
                 proc->setRemTime(proc->getRemTime() - time_in_prev_state);
@@ -295,6 +299,7 @@ int main(int argc, char **argv) {
 
 			// measure io util if prev state was blocked
 			if(proc->getState() == BLOCKED) {
+				proc->setDynamicPrio(proc->getStPrio()-1);
 				sim->io_interval_end(current_time);
 			}
             
@@ -307,6 +312,9 @@ int main(int argc, char **argv) {
 				else
 					printf("%d %d %d: %s\n", current_time, proc->getPID(), time_in_prev_state, transition_names[transition]);
 			}
+
+			if(proc->getState() == RUNNING && (sched_type == 'P' || sched_type == 'E'))
+				proc->setDynamicPrio(proc->getPrio()-1);
 			proc->setState(READY);
             scheduler->add_process(proc);
             call_scheduler = true;
@@ -333,17 +341,21 @@ int main(int argc, char **argv) {
 
             int run_proc_time;
             run_proc_time = min(current_cb, min(proc_rem_time, quantum));
+			Event* exit_current_running_proc;
+
             // check for termination; process exits in blocked state
 			if(run_proc_time == proc_rem_time) {
-                sim->putEvent(new Event(current_time + run_proc_time, genTimestamp++, proc,
-                                        RUNNING, BLOCKED, RUN_TO_BLOCKED));
+                exit_current_running_proc = new Event(current_time + run_proc_time, genTimestamp++, proc,
+                                        RUNNING, BLOCKED, RUN_TO_BLOCKED);
 			} else if(run_proc_time == current_cb) {  // check for io scheduling
-                sim->putEvent(new Event(current_time + run_proc_time, genTimestamp++, proc,
-                                        RUNNING, BLOCKED, RUN_TO_BLOCKED));
+                exit_current_running_proc = new Event(current_time + run_proc_time, genTimestamp++, proc,
+                                        RUNNING, BLOCKED, RUN_TO_BLOCKED);
             } else if(run_proc_time == quantum) { // check for quantum expiration
-                sim->putEvent(new Event(current_time + run_proc_time, genTimestamp++, proc,
-                                        RUNNING, READY, RUN_TO_READY));
+				exit_current_running_proc = new Event(current_time + run_proc_time, genTimestamp++, proc,
+                                        RUNNING, READY, RUN_TO_READY);
             }
+			sim->putEvent(exit_current_running_proc);
+			exit_event = exit_current_running_proc;
             break;
         }
         
@@ -356,7 +368,6 @@ int main(int argc, char **argv) {
             
             // if process has run for tc, don't do io, add process to final vector
             if(proc->getRemTime() == 0) {
-                // cout << "exiting proc " << *proc << '\n';
 				sim->io_interval_end(current_time);
                 proc->setFT(current_time);
                 proc->setTT(current_time - proc->getAT());
@@ -378,16 +389,33 @@ int main(int argc, char **argv) {
         }
         
         default: {
-            cout << "Invalid transition " << transition << " panic!!\n";
+			printf("Invalid transition %s, panic!!\n", transition_names[transition]);
             exit(1);
             break;
         }
         } // switch ends
 
         if(call_scheduler) {
-            if(sim->getNextEventTime() == current_time) {
-                continue; //process next event from event queue WHY??
+			// if there is some process running, test if it should be preempted
+			// if it should be preempted, invalidate current exit event and create new exit event with the same 
+			// timestamp as current time.
+			if(current_running_process && sched_type == 'E') {
+				prio_preemption = scheduler->test_preempt(current_running_process, proc, current_time, exit_event);
+				if(verbose)
+				printf("---> PRIO preemption %d by %d ? %d TS=%d now=%d) --> %s\n",
+						current_running_process->getPID(), proc->getPID(), proc->getPrio() > current_running_process->getPrio(),
+						exit_event->getEvtTimestamp(), current_time, prio_test_preempt_action[(int)prio_preemption]);
+				if(prio_preemption) {
+					exit_event->invalidate();
+					exit_event = new Event(current_time, genTimestamp++, current_running_process, RUNNING, READY, RUN_TO_READY);
+					sim->putEvent(exit_event);
+				}
+			}
+            
+			if(sim->getNextEventTime() == current_time && sim->isNextEventValid()) {
+                continue; //process next event from event queue
             }
+			
             call_scheduler = false;
             if(current_running_process == nullptr) {
                 current_running_process = scheduler->get_next_process();
@@ -428,6 +456,7 @@ int main(int argc, char **argv) {
 
 	case 'E':
 		printf("PREPRIO %d\n", quantum);
+		break;
 	
 	default: {
 		printf("Unknown scheduler\n");
