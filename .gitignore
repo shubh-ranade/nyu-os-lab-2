@@ -31,6 +31,7 @@
 *.out
 *.app
 simulation
+sched
 
 # Inputs/outputs
 geninput/*
