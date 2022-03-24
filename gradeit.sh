@@ -10,8 +10,7 @@ INS="`seq 0 6`"
 OUTPRE="out"
 
 #SCHEDS="  F   L   S  R2  R5  P2  P5  E2  E4"
-# SCHEDS="   F    L    S   R2   R5   P2   P5:3 E2:5  E4"  
-SCHEDS="   F    L    S   R2   R5"
+SCHEDS="   F    L    S   R2   R5   P2   P5:3 E2:5  E4"  
 
 ############################################################################
 #  NO TRACING 
