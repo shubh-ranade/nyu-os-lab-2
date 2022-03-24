@@ -50,3 +50,53 @@ Process* SRTFSched::get_next_process() {
     readyQ.pop_front();
     return ret;
 }
+
+void PRIOSched::add_process(Process* proc) {
+    int idx = proc->getPrio();
+    if(idx >= 0) {
+        activeQ[idx].push(proc);
+    }
+    else {
+        proc->setDynamicPrio(proc->getStPrio()-1);
+        idx = proc->getPrio();
+        expiredQ[idx].push(proc);
+    }
+}
+
+Process* PRIOSched::get_next_process() {
+    int idx = maxprios - 1;
+    Process* ret;
+    while(idx != -1 && activeQ[idx].empty()){
+        idx--;
+    }
+    if(idx >= 0) {
+        ret = activeQ[idx].front();
+        activeQ[idx].pop();
+        return ret;
+    }
+
+    activeQ.swap(expiredQ);
+    
+    idx = maxprios - 1;
+    while(idx != -1 && activeQ[idx].empty()) {
+        idx--;
+    }
+    if(idx >= 0) {
+        ret = activeQ[idx].front();
+        activeQ[idx].pop();
+        return ret;
+    }
+    return nullptr;
+}
+
+bool PRIOSched::test_preempt(Process* curr_proc, Process* unblocked, int current_ts, Event* exit_event) {
+    
+    if(!eflag || exit_event->getEvtTimestamp() == current_ts || !exit_event->isEvtValid())
+        return false;
+
+    int idx;
+
+    for(idx = maxprios - 1; idx > curr_proc->getPrio() && activeQ[idx].empty(); idx--);
+    
+    return unblocked->getPrio() > curr_proc->getPrio() && idx > curr_proc->getPrio();
+}

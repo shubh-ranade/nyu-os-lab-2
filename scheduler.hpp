@@ -4,13 +4,13 @@
 #include <list>
 #include <queue>
 #include <stack>
-#include "process.hpp"
+#include "event.hpp"
 
 class Scheduler {
 public:
     virtual void add_process(Process* proc) = 0;
     virtual Process* get_next_process() = 0;
-    virtual bool test_preempt(Process* proc, int current_time) = 0;
+    virtual bool test_preempt(Process* curr_proc, Process* unblocked, int current_ts, Event* exit_event) { return false; }
     virtual ~Scheduler() = default;
 };
 
@@ -20,7 +20,6 @@ private:
 public:
     virtual void add_process(Process* proc);
     virtual Process* get_next_process();
-    virtual bool test_preempt(Process* proc, int current_time) {}
     virtual ~FCFSSched() {
         delete &readyQ;
     }
@@ -32,7 +31,6 @@ private:
 public:
     virtual void add_process(Process* proc);
     virtual Process* get_next_process();
-    virtual bool test_preempt(Process* proc, int current_time) {}
     virtual ~LCFSSched() {
         delete &readyQ;
     }
@@ -44,9 +42,25 @@ private:
 public:
     virtual void add_process(Process* proc);
     virtual Process* get_next_process();
-    virtual bool test_preempt(Process* proc, int current_time) {}
     virtual ~SRTFSched() {
         delete &readyQ;
+    }
+};
+
+class PRIOSched : public Scheduler {
+private:
+    int maxprios;
+    bool eflag;
+    std::vector<std::queue<Process*>> activeQ;
+    std::vector<std::queue<Process*>> expiredQ;
+public:
+    virtual void add_process(Process* proc);
+    virtual Process* get_next_process();
+    virtual bool test_preempt(Process* curr_proc, Process* unblocked, int current_ts, Event* exit_event);
+    PRIOSched(int maxprio, bool e) : maxprios(maxprio), activeQ(maxprio), expiredQ(maxprio), eflag(e) {}
+    virtual ~PRIOSched() {
+        delete &activeQ;
+        delete &expiredQ;
     }
 };
 
